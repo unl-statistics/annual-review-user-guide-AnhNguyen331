@@ -1,6 +1,23 @@
-# Topic
+# Topic for My User Guide
 
-Pick some subset of the information covered in your annual review article that you are interested in exploring in more detail. 
+For my user guide, I will focus on **anticipatory action and statistical trigger models used in humanitarian disaster response**. This topic comes from the sections of the Annual Review article that discuss forecast-based financing and early warning systems for natural hazards like floods, cyclones, and droughts.
 
-Identify the scope of your user guide - what will you cover? Specific software packages? When to use or not to use a specific technique?
+Instead of covering all humanitarian statistics, I'm narrowing in on how analysts decide **when a forecast is strong enough to take action before a disaster happens**.
 
+# Scope of the User Guide
+
+The goal of this user guide is to act as a basic "how-to" manual for someone working in humanitarian organization who needs to help decide when to trigger early actions, such as releasing funds or pre-positioning supplies.
+
+The guide will explain:
+
+-   What anticipatory action is and how it differs from reacting after a disaster.
+
+-   The types of data used to build trigger models (hazard forecasts, population data, past disaster impacts).
+
+-   How trigger thresholds are chosen and what they represent.
+
+-   How to think about false alarms vs. missed disasters when evaluating a trigger.
+
+-   Situations where anticipatory action works well and situations where it probably should not be used.
+
+-   Some basic ethical concerns, like how data quality and bias can affect who receives help first.
