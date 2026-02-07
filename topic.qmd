@@ -21,3 +21,11 @@ The guide will explain:
 -   Situations where anticipatory action works well and situations where it probably should not be used.
 
 -   Some basic ethical concerns, like how data quality and bias can affect who receives help first.
+
+
+::: callout-note
+# Dr. V's comments
+
+I would set yourself up with a hypothetical example -- you could probably get data from e.g. weather forecasts before and during a hurricane or the 2021 Texas freeze or some similar weather event. I think that will make it easier to show what types of data are necessary and how you would set up a data-driven disaster pre-response.
+
+Also, if you haven't looked into the Waffle House index, know that their disaster modeling is probably worth a look. The US government uses that as an indicator in the area that Waffle Houses are common, and it's also just fascinating in general :). Southerners definitely decide what to do about hurricanes, etc. based on the behavior of local Waffle houses and also where Jim Cantori has stationed himself to broadcast the hurricane. 
