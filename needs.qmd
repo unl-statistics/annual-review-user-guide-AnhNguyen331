@@ -1,9 +1,37 @@
 # Needs Assessment {.appendix}
 
-What does someone trying to accomplish your chosen task need help with? 
+## 1. What does someone trying to accomplish your chosen task need help with?
 
-What parts are likely to be tricky? 
+A practitioner attempting to design or implement anticipatory action based on statistical trigger models needs support in several key areas.
 
-What resources are already available on this topic that may be helpful? Look for e.g. software vignettes, package documentation, papers about software packages, and so on.
+First, they must clearly define the decision problem. Anticipatory action requires determining when a forecast is strong enough to justify releasing funds or activating interventions before a disaster occurs. This involves specifying the hazard (e.g., floods, cyclones, droughts), defining the impact metric (such as predicted population exposure or economic loss), identifying the action to be taken (cash transfers, evacuation support, pre-positioning supplies), and selecting a trigger threshold.
 
+Second, users need guidance in building and validating statistical trigger models. This includes assembling historical disaster data, selecting predictor variables from forecast systems, estimating impact relationships, and determining probability thresholds. Statistical tools such as logistic regression, ROC curve analysis, cross-validation, and cost-loss modeling are often required to evaluate performance and balance false positives and false negatives.
 
+Third, users must understand the limitations of humanitarian data. Major disaster datasets such as [EM-DAT](https://www.emdat.be) and displacement data from the [Internal Displacement Monitoring Centre (IDMC)](https://www.internal-displacement.org) contain reporting inconsistencies, undercounting, and geographic biases. These limitations directly affect trigger calibration and model reliability.
+
+Finally, practitioners need support in aligning statistical models with operational constraints. Even a well-performing forecast model must integrate with pre-agreed financing mechanisms, government approval processes, and logistical realities. Trigger systems therefore require both statistical rigor and institutional feasibility.
+
+## 2. What parts are likely to be tricky?
+
+Several aspects of anticipatory action modeling are particularly challenging.
+
+One major difficulty is small sample sizes. Many regions lack sufficient historical disaster records to robustly estimate probability thresholds or validate predictive performance. This increases uncertainty and can make statistical inference unstable.
+
+Another challenge involves selecting the appropriate impact metric. Triggers based on economic loss may bias attention toward wealthier regions, while mortality-based triggers may not fully capture humanitarian need. Exposure-based metrics depend heavily on population data quality.
+
+Balancing false positives and false negatives is also complex. A trigger that activates too often wastes limited resources and may erode trust. A trigger that is too strict risks failing to prevent avoidable suffering. Determining the acceptable trade-off requires explicit cost-loss reasoning and ethical consideration.
+
+Finally, communicating probabilistic forecasts to decision-makers can be difficult. Forecast systems produce uncertainty, yet operational systems often require binary decisions. Translating probability into actionable thresholds is both a statistical and communication challenge.
+
+## 3. What resources are already available on this topic that may be helpful? Look for e.g. software vignettes, package documentation, papers about software packages, and so on.
+
+Several existing resources can assist users designing anticipatory action systems.
+
+Policy frameworks and implementation guidance are available from organizations such as the [International Federation of Red Cross and Red Crescent Societies (IFRC)](https://www.ifrc.org), which has developed forecast-based financing protocols. The [UN Office for the Coordination of Humanitarian Affairs (UNOCHA)](https://www.unocha.org) provides guidance on predictive analytics in humanitarian response.
+
+For statistical implementation, extensive documentation exists within R and Python ecosystems. Packages such as `pROC`, `caret`, and `evd` in R, and `scikit-learn` and `statsmodels` in Python, offer tools for threshold optimization, classification modeling, and forecast verification. Meteorological forecast verification literature, particularly work on Brier scores and ROC analysis, is also highly relevant.
+
+Additionally, publicly available hazard and exposure datasets, including EM-DAT and IDMC, provide foundational data for trigger calibration, though they must be used with awareness of their limitations.
+
+In summary, designing anticipatory action triggers requires integrating statistical modeling, decision theory, data quality assessment, and operational feasibility. A user guide on this topic should therefore emphasize not only how to construct statistical models, but also how to evaluate their performance and embed them within real-world humanitarian systems.

@@ -1,27 +1,149 @@
+---
+editor: 
+  markdown: 
+    wrap: 72
+---
 
 # Task Analysis {.appendix}
 
-Here are some questions to guide you through the process of doing a task analysis. You don't have to specifically answer each one of these (and some may not apply), but they should get you started thinking in the right direction. 
+Here are some questions to guide you through the process of doing a task
+analysis. You don't have to specifically answer each one of these (and
+some may not apply), but they should get you started thinking in the
+right direction.
 
-What are the prerequisites, for both knowledge and e.g. software setup? 
+### What are the prerequisites, for both knowledge and e.g. software setup?
 
-What are the basic requirements for any data that the method is used on? 
-  - Are missing values allowed? 
-  - Should the data be confined within a certain range? 
-  - Does the data have to be approximately normally distributed? 
+If someone wants to build a statistical trigger for anticipatory action,
+they need a mix of stats knowledge and real-world understanding.
 
-What are the basic components of the task?
-  - Outline these in a bit more detail
+On the technical side, they should be comfortable with:
 
+-   Basic probability and regression (especially logistic regression)
+-   Model validation (ROC curves, sensitivity/specificity,
+    cross-validation)
+-   Thinking about uncertainty in forecasts
+-   Some programming in R or Python
 
-What decisions does the user need to be prepared to make on the fly?
+On the humanitarian side, they need to understand:
 
-What questions should the user ask of the "first draft" of the product? What adjustments may need to be made?
+-   What kind of disaster they’re dealing with (flood, drought, cyclone,
+    etc.)
+-   What actions are actually possible before the disaster happens
+-   How funding and activation decisions are made in practice
 
+For software setup, they’ll probably need:
 
-## Additional Guidance 
+-   R or Python - Modeling libraries (like `caret` or `scikit-learn`)
+-   Some way to manage data cleanly (tidyverse or pandas)
+-   Ideally version control if this is collaborative
 
-Your check-in should answer these basic questions (and similar concerns that apply more directly to your topic). 
+### What are the basic requirements for any data that the method is used on?
 
-Once you've completed the check-in, you can use this section to jump-start an introduction/set-up/getting started section in your user guide. 
-This document should remain as an appendix to your main report. 
+**Are missing values allowed?**
+
+Missing data is pretty common in disaster datasets.
+
+Some form of cleaning or imputation will probably be needed.
+
+**Should the data be confined within a certain range?**
+
+-   Forecast probabilities need to be between 0 and 1.
+-   Some hazard indicators might need scaling.
+-   Extreme outliers should be checked (but not automatically removed —
+    disasters *are* extreme).
+
+**Does the data have to be approximately normally distributed?**
+
+Not necessarily. Logistic regression doesn’t require normal predictors.\
+Impact data is often skewed anyway. Rare events are kind of the whole
+point.
+
+Class imbalance (lots of non-events, few disasters) is more likely to be
+an issue than normality.
+
+### What are the basic components of the task
+
+**1.  Define the goal**
+
+-   What action are we trying to trigger?
+-   What level of predicted impact justifies action?
+-   What is “too risky” vs “too cautious”?
+
+This step is more conceptual than statistical.
+
+**2.  Gather and clean the data**
+
+-   Align forecast data with observed impact data
+-   Make sure time periods match
+-   Decide how to handle missing values
+-   Define a clear outcome variable
+
+This step might take longer than modeling.
+
+**3.  Build a first draft model**
+
+Possibilities:
+
+-   Logistic regression predicting whether impact exceeds a threshold
+-   Regression predicting expected impact
+-   A simple probability cutoff from forecast models
+
+The key question: Does the forecast meaningfully predict real impact?
+
+**4.  Evaluate performance**
+
+Look at:
+
+-   True positives (good activations)
+-   False positives (unnecessary activations)
+-   False negatives (missed disasters)
+-   ROC curve / AUC
+-   How often the trigger would have activated historically
+
+This is where trade-offs become real.
+
+**5.  Choose the trigger threshold**
+
+This is probably the hardest part.
+
+-   Too low → you activate too often.
+-   Too high → you miss real disasters.
+
+There isn’t a purely “correct” answer — it depends on cost, funding, and
+risk tolerance.
+
+**6.  Stress test it**
+
+-   What happens in extreme years?
+-   Does it work equally well across regions?
+-   Is performance stable over time?
+-   Does small data noise change activation decisions?
+
+### What decisions does the user need to be prepared to make on the fly?
+
+Some decisions can’t be fully automated:
+
+-   Which impact metric should be used?
+-   Is it worse to miss a disaster or waste funds?
+-   Should thresholds be updated annually?
+-   What if the forecast is borderline?
+-   What if political actors override the model?
+
+### What questions should the user ask of the "first draft" of the product? What adjustments may need to be made?
+
+After the first version of the trigger system, I’d ask:
+
+-   Does it activate in the worst historical events?
+-   Does it activate too frequently in moderate events?
+-   Are certain regions consistently misclassified?
+-   Does it rely too heavily on one predictor?
+-   Is it overfitting to past data?
+
+If something looks off, possible adjustments include:
+
+-   Changing the threshold
+-   Rebalancing classes
+-   Adding predictors
+-   Simplifying the model
+-   Using ensemble forecasts
+-   Reframing the outcome variable
