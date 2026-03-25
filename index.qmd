@@ -422,83 +422,310 @@ Key preprocessing steps:
 
 ## Step 3: Build a First Draft Model
 
-We begin by estimating the relationship between earthquake magnitude and severity.
+To demonstrate how a trigger model works, we use a simple example where higher hazard values increase the chance of a severe event.
 
 ```{r}
-table(earthquake$severe, earthquake$Mag >= 7)
+set.seed(1)
+
+hazard <- seq(1, 50, length.out = 60)
+severe <- ifelse(hazard + rnorm(60, 0, 8) > 28, 1, 0)
+
+data_sim <- data.frame(hazard, severe)
 ```
-This shows that all severe events occur at magnitude ≥ 7, while all non-severe events occur below this threshold. This indicates perfect separation, meaning magnitude fully determines the outcome.
 
-As a result, logistic regression is not appropriate, as it attempts to estimate probabilities where no uncertainty exists and fails to converge.
-
-Instead, we use a rule-based trigger:
+Fit a simple model:
 ```{r}
-earthquake$trigger <- ifelse(earthquake$Mag >= 7, 1, 0)
+model_simple <- glm(severe ~ hazard,
+                    data = data_sim,
+                    family = "binomial")
 ```
-This rule directly reflects the observed relationship in the data and provides a simple, interpretable decision mechanism.
+
+Fit a more complex model:
+```{r,warning=FALSE}
+model_complex <- glm(severe ~ poly(hazard, 3),
+                     data = data_sim,
+                     family = "binomial")
+```
+
+Plot the results:
+```{r}
+x <- seq(min(hazard), max(hazard), length.out = 200)
+
+p1 <- predict(model_simple, newdata = data.frame(hazard = x), type = "response")
+p2 <- predict(model_complex, newdata = data.frame(hazard = x), type = "response")
+
+plot(hazard, severe,
+     xlab = "Hazard",
+     ylab = "Severe (0/1)",
+     main = "Simple vs Complex Model")
+
+lines(x, p1, lwd = 2)
+lines(x, p2, lwd = 2, lty = 2)
+
+legend("bottomright",
+       legend = c("Simple model", "Complex model"),
+       lty = c(1, 2),
+       lwd = 2)
+```
+In this example, the simple and more flexible models produce very similar curves, indicating that the relationship between hazard and severe events is already well captured by a simple model.
+
+However, when models become more complex, they may begin to fit random variation in the data rather than the underlying pattern. This is known as overfitting.
+
+Overfitting occurs when a model performs well on the training data but does not generalize well to new data. For trigger systems, this can lead to unreliable decisions in real-world settings.
 
 ## Step 4: Evaluate Performance
 
-After fitting the model, assess its performance using historical data.
+After building the model, we evaluate how well it predicts severe events using historical data. The goal is not only to measure accuracy, but also to understand how the model behaves when making decisions.
 
-Important metrics:
+The model produces predicted probabilities for each observation:
+```{r}
+#Make prediction
+pred_probs <- predict(model_simple, type = "response")
+```
+These probabilities represent how likely each event is to be severe.
 
--   True Positives (correct activations)
--   False Positives (unnecessary activations)
--   False Negatives (missed disasters)
--   Sensitivity (recall)
--   Specificity
--   ROC Curve
--   Area Under the Curve (AUC)
+To turn these into decisions, we apply a threshold of 0.5:
+```{r}
+#Choose a temporary threshold of 0.5
+pred_class <- ifelse(pred_probs > 0.5, 1, 0)
+```
 
-This is where trade-offs become visible.
+This means:
 
-A ROC curve illustrates how activation frequency changes as the threshold shifts.
+- If probability > 0.5 → predict a severe event (trigger action)
+- Otherwise → predict non-severe (no action)
 
-Key diagnostic questions:
+But the threshold 0.5 here is just an example which could be modified based on the research.
 
--   Does the model activate during the worst historical disasters?
--   Does it activate too frequently in moderate years?
--   Is performance stable across time?
+```{r}
+#Confusion matrix
+library(knitr)
+
+cm <- table(Predicted = pred_class, Actual = data_sim$severe)
+
+kable(cm, col.names = c("Actual: No", "Actual : Yes"), caption = "Confusion Matrix")
+```
+
+The confusion matrix shows how the model performs:
+
+- 31 True Negatives: correctly predicted non-severe events
+- 23 True Positives: correctly predicted severe events
+- 3 False Positives: predicted a disaster that did not occur
+- 3 False Negatives: missed real disasters
+
+Based on the confusion matrix we can answer some questions:
+
+- How many severe events are correctly detected based on the number of True Positives.
+- How many severe events are missed based on the number of False Negatives.
+- How often unnecessary actions are triggered based on the number of False Positives.
+
+In disaster response, false negatives (missed disasters) are typically the most critical error.
+
+To evaluate performance across all possible thresholds, use a ROC curve. The ROC curve shows how sensitivity and specificity change as the threshold varies.
+
+The Area Under the Curve (AUC) summarizes performance:
+
+- 0.5 → no predictive ability
+- 0.7–0.8 → acceptable
+- 0.8+ → strong
+
+
+```{r, message=FALSE}
+library(pROC)
+
+roc_obj <- roc(data_sim$severe, pred_probs)
+plot(roc_obj, main = "ROC Curve")
+auc(roc_obj)
+```
+
+The AUC we got above (0.9842) is suggesting that the model has excellent ability to distinguish between severe and non-severe events.
+
+However, despite the high AUC, the model still misses 3 severe events (false negatives). In a disaster response context, these missed events are particularly important, as they represent situations where action would not be triggered despite a real disaster occurring.
+
+This highlights that while the model performs very well overall, the choice of threshold remains critical and may need to be adjusted to reduce missed disasters.
+
+This is why evaluating both:
+
+- overall model performance (AUC), and
+- decision-based performance (confusion matrix)
+
+is essential.
 
 ## Step 5: Choose the Trigger Threshold
 
-This is typically the hardest step.
+After building and evaluating the model, the next step is to decide when to take action.
 
-A low threshold:
+The model gives predicted probabilities, but we must choose a threshold to turn those into decisions.
 
--   More activations
--   Fewer missed disasters
--   Higher financial cost
+1. What Does the Threshold Do?
 
-A high threshold:
+The threshold controls how often the system triggers action:
 
--   Fewer activations
--   Higher risk of missed severe events
+- Low threshold (e.g., 0.3):
+    - More activations
+    - Fewer missed disasters
+    - Higher cost
+    
+- Medium threshold (e.g., 0.5):
+    - Balanced behavior
+    
+- High threshold (e.g., 0.7):
+    - Fewer activations
+    - More missed disasters
+    
+2. Compare thresholds with example:
 
-There is no purely “correct” threshold. The decision depends on:
+```{r}
+set.seed(123)
 
--   Budget constraints
--   Institutional risk tolerance
--   Ethical priorities
--   Cost-loss trade-offs
+n <- 80
+time <- 1:n
 
-The selected threshold should be justified and documented transparently.
+# Simulate hazard severity (many small, few large events)
+severity <- rexp(n, rate = 0.12)
+
+# True severe events
+severe_event <- ifelse(severity > 10, 1, 0)
+
+# Predicted probabilities
+pred_probs <- plogis(-3 + 0.35 * severity)
+
+data_thresh <- data.frame(time, severity, severe_event, pred_probs)
+
+# Apply thresholds
+data_thresh$low  <- ifelse(pred_probs >= 0.3, 1, 0)
+data_thresh$med  <- ifelse(pred_probs >= 0.5, 1, 0)
+data_thresh$high <- ifelse(pred_probs >= 0.7, 1, 0)
+```
+
+```{r}
+plot(data_thresh$time, data_thresh$pred_probs, type = "b",
+     xlab = "Time", ylab = "Predicted Probability",
+     main = "Predicted Probabilities with Thresholds")
+
+abline(h = 0.3, lty = 2)
+abline(h = 0.5, lty = 2)
+abline(h = 0.7, lty = 2)
+```
+The plot above shows predicted probabilities over time, with three thresholds:
+
+- 0.3 (low)
+- 0.5 (medium)
+- 0.7 (high)
+
+Any point above a line would trigger action at that threshold.
+
+- At 0.3, many points are above the line → frequent activation
+- At 0.5, fewer points are above → moderate activation
+- At 0.7, only the highest points are above → rare activation
+
+```{r}
+par(mfrow = c(3,1))
+
+plot(time, severity, type = "h", main = "Low Threshold (0.3)")
+points(time[data_thresh$low == 1], severity[data_thresh$low == 1], pch = 16)
+
+plot(time, severity, type = "h", main = "Medium Threshold (0.5)")
+points(time[data_thresh$med == 1], severity[data_thresh$med == 1], pch = 16)
+
+plot(time, severity, type = "h", main = "High Threshold (0.7)")
+points(time[data_thresh$high == 1], severity[data_thresh$high == 1], pch = 16)
+```
+The three plot above show how each threshold behaves in practice:
+
+- Low threshold (0.3)
+    - Many events trigger action.
+    - Most severe events are captured.
+    - But many smaller events also trigger → higher cost.
+
+- Medium threshold (0.5)
+    - Fewer activations than low threshold.
+    - Still captures most severe events.
+    - More balanced behavior.
+
+- High threshold (0.7)
+    - Only the largest events trigger action.
+    - Fewer unnecessary activations.
+    - But some important events are missed → higher risk.
+    
+These plots show a clear trade-off:
+
+- Lower threshold → act more often, miss fewer disasters.
+- Higher threshold → act less often, miss more disasters.
+
+The best threshold depends on your priorities:
+
+- If missing disasters is very costly → choose a lower threshold.
+- If resources are limited → choose a higher threshold.
+
+Define the final rule clearly:
+    “Trigger action if predicted probability ≥ chosen threshold.”
+
+The selected threshold defines when action is taken, but this decision should not rely on a single dataset or scenario.
+
+Before deployment, it is important to test how stable this trigger is under different conditions.
+
+In the next step, we evaluate how sensitive the trigger is to changes in data and whether it performs consistently over time.
 
 ## Step 6: Stress-Test the System
 
-Before deployment, test robustness.
+A trigger that performs well in one setting may not behave the same way in practice.
 
-Questions to ask:
+This step tests whether the chosen threshold and model produce stable and reliable decisions when conditions change.
 
--   What happens in extreme years?
--   Does performance vary by region?
--   Is the trigger sensitive to small data changes?
--   Does recalibration change activation frequency dramatically?
+Small changes in the data should not lead to big changes in decisions.
 
-Out-of-sample testing is strongly recommended.
+For example: 
+```{r}
+# Add small noise to predictions
+pred_perturbed <- pred_probs + rnorm(length(pred_probs), 0, 0.05)
 
-A trigger system should be stable, interpretable, and operationally feasible.
+# Apply threshold
+act_original  <- ifelse(pred_probs >= 0.5, 1, 0)
+act_perturbed <- ifelse(pred_perturbed >= 0.5, 1, 0)
+```
+
+```{r}
+plot(pred_probs, type = "l",
+     ylim = c(0,1),
+     ylab = "Predicted Probability",
+     xlab = "Time",
+     main = "Sensitivity to Small Changes")
+
+lines(pred_perturbed, lty = 2)
+abline(h = 0.5, lty = 3)
+```
+The plot compares:
+
+- Solid line → original predicted probabilities.
+- Dashed line → slightly changed data.
+- Horizontal line (0.5) → trigger threshold.
+
+The two lines are very similar overall.
+
+However, near the threshold (0.5), small differences appear.
+
+In some cases, the dashed line crosses the threshold when the solid line does not (or vice versa).
+
+**This means:**
+
+- A small change in data can change whether action is triggered.
+- The trigger is most sensitive near the threshold.
+
+When stress-testing, ask:
+
+- Does the trigger still capture extreme events?
+- Does performance change across regions or time?
+- Are decisions stable, or do they change easily?
+- Does updating the model change activation frequency a lot?
+
+Out-of-sample testing is strongly recommended because we can check if the model is still perform well or the result are still consistent over time. 
+
+A good trigger should be:
+
+- Stable → small data changes do not cause large decision changes.
+- Interpretable → easy to explain to decision-makers.
+- Operationally feasible → realistic for real-world use.
 
 # Additional Resources
 
