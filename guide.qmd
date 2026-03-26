@@ -1,0 +1,735 @@
+<!-- # Designing Anticipatory Action Trigger Models for Humanitarian Disaster Response {-} -->
+# Prerequisites
+
+Before beginning, users should have the following background and tools:
+
+## Knowledge
+
+-   Basic probability and statistical inference
+-   Familiarity with regression or classification models (especially logistic regression)
+-   Understanding of model validation concepts such as sensitivity, specificity, and ROC curves
+-   Awareness that forecast outputs are probabilistic, not deterministic
+
+A general understanding of humanitarian disaster response systems is helpful, particularly how funding activation decisions are made.
+
+## Software
+
+Users should have access to one of the following:
+
+**R (recommended packages):**
+
+-   `tidyverse` for data cleaning and transformation
+-   `caret` for predictive modeling
+-   `pROC` for ROC curve analysis
+
+**or Python (recommended packages):**
+
+-   `pandas` for data manipulation
+-   `scikit-learn` for classification models
+-   `statsmodels` for statistical modeling
+
+A reproducible project structure (such as an RStudio Project or Python virtual environment) is strongly recommended. Version control using Git is also encouraged for transparency and collaboration.
+
+## Data Documentation and Requirements
+
+This user guide assumes access to a structured dataset that combines historical hazard forecast data with observed disaster impact data. While the specific source of the data may vary depending on country or hazard type, the structure and quality requirements remain consistent.
+
+Each observation in the dataset should represent a single event (or region–year combination), and include both forecast information and observed outcomes.
+
+### Required Variables
+
+At minimum, the dataset should include:
+
+-   A time variable (e.g., year or event date)
+-   A geographic identifier (e.g., region, province, district)
+-   One or more forecast variables (e.g., forecast probability, rainfall anomaly, wind speed)
+-   An observed impact variable (e.g., affected population, displacement, mortality)
+-   A clearly defined outcome variable for modeling (binary or continuous)
+
+For binary trigger modeling, the impact variable is typically converted into an indicator such as:
+
+-   `severe_impact = 1` if affected population ≥ chosen threshold
+-   `severe_impact = 0` otherwise
+
+The threshold should be justified operationally, not selected arbitrarily.
+
+### Missing Data
+
+Missing values are common in disaster datasets due to inconsistent reporting, delayed assessments, or regional data gaps.
+
+To illustrate these concepts, we use a small example dataset:
+
+```{r}
+# Example dataset
+data <- data.frame(
+  rainfall = c(10, 12, NA, 15, NA),
+  wind_speed = c(5, NA, 7, 8, 9),
+  region = c("urban", "rural", "rural", "urban", "rural")
+)
+
+data
+```
+
+**1. Identifying missingness**
+
+The first step is to quantify how much data is missing in each variable:
+
+```{r}
+colSums(is.na(data))
+```
+
+The output shows the number of missing values in each variable:
+
+-   `rainfall`: 2 missing values\
+-   `wind_speed`: 1 missing value\
+-   `region`: 0 missing values
+
+This indicates that missingness is concentrated in the numerical variables, while the categorical variable (`region`) is complete. In practice, this suggests that measurement-related variables (e.g., rainfall, wind speed) are more prone to missing data than descriptive variables like location.
+
+To examine the patterns of missingess:
+
+```{r}
+is.na(data)
+```
+
+The matrix produced by `is.na(data)` shows the exact locations of missing values:
+
+-   Row 2 is missing `wind_speed`\
+-   Rows 3 and 5 are missing `rainfall`
+
+This reveals that missing values are not evenly distributed across observations. For example, multiple missing rainfall values occur in rural regions, which may suggest **systematic missingness** rather than random error.
+
+This distinction is important because non-random missingness can bias model estimates and lead to inaccurate trigger thresholds if not handled properly.
+
+Missing data generally fall under three categories:
+
+-   Missing Completely at Random (MCAR): missing values occur randomly
+-   Missing at Random (MAR): Missingness depends on other observed variables
+-   Missing Not at Random (MNAR): Missingness depends on the missing value itself
+
+In this dataset, rainfall values are missing in rows corresponding to rural regions. This suggests that missingness may depend on location (an observed variable), which is consistent with Missing at Random (MAR) rather than purely random error.
+
+Identifying the type of missingness is important because it determines appropriate handling strategies. For example, if missingness is systematic, simple methods like dropping observations may introduce bias into the model.
+
+**2. Handling missing data**
+
+There are three primary strategies:
+
+2.1. **Imputation (fill in missing values):**
+
+```{r}
+data$rainfall_imputed <- data$rainfall
+data$rainfall_imputed[is.na(data$rainfall_imputed)] <- mean(data$rainfall, na.rm = TRUE)
+data
+```
+
+The updated dataset demonstrates handling missing rainfall using both **flagging** and **imputation**.
+
+-   `rainfall_missing` indicates whether a value was originally missing (1 = missing, 0 = observed)\
+-   `rainfall_imputed` replaces missing values with the mean of observed rainfall (12.33)
+
+Rows 3 and 5 had missing rainfall values and were imputed, while observed values remain unchanged.
+
+This approach retains all observations, provides complete inputs for modeling, and preserves information about missingness. This is important because missing data in disaster contexts is often systematic (e.g., rural areas), and may carry meaningful information.
+
+However, mean imputation reduces variability and can underestimate extreme events, so it should be used with caution.
+
+2.2. **Exclusion (remove incomplete observations):**
+
+```{r}
+na.omit(data)
+```
+
+The result of `na.omit(data)` removes all rows with any missing values, leaving only two complete observations (rows 1 and 4).
+
+This means **3 out of 5 rows (60%) are discarded**, and all remaining data come from urban regions. As a result, the dataset is no longer representative and may introduce bias.
+
+In disaster datasets, missing data often occur in harder-to-reach or more severely affected areas (e.g., rural regions). Removing these observations can lead to **underestimating risk** and miscalibrated trigger thresholds.
+
+Therefore, exclusion (`na.omit`) should only be used when missingness is minimal and approximately random.
+
+2.3. **Flagging (retain missingness as information):**
+
+Instead of removing missing values, flagging creates a new variable that records whether a value was originally missing.
+
+Computationally, this is done by converting missing values (`NA`) into a binary indicator:
+
+```{r}
+data$rainfall_missing <- ifelse(is.na(data$rainfall), 1, 0)
+```
+
+```         
+- `1` indicates the value was missing
+- `0` indicates the value was observed
+```
+
+This approach keeps the original data while allowing the model to use missingness as an additional feature. In disaster datasets, missing values are often not random (e.g., due to damaged infrastructure or inaccessible regions), so flagging helps preserve this information rather than discarding it.
+
+### Range and Logical Constraints
+
+Certain variables must satisfy logical constraints:
+
+-   Forecast probabilities must lie within the interval (\[0, 1\]).
+-   Hazard intensity measures (e.g., rainfall in mm, wind speed in km/h) must use consistent units.
+-   Derived variables should be clearly defined and consistently calculated.
+
+We use earthquake data from NOAA’s Global Significant Earthquake Database [@noaa_earthquake_japan], covering events in Japan from 2005–2025.
+
+```{r, fig-eq-dist}
+#| fig-cap: "Distribution of earthquake magnitudes in Japan (2005–2025)"
+
+#Load data
+earthquake <- read.csv("Japan_earthquake_2005-2025.csv")
+
+#Select just year, location and magnitude of the earthquake
+earthquake <- earthquake[,c("Year", "Location.Name", "Mag")]
+
+#Remove missing value
+earthquake <- na.omit(earthquake)
+
+#Visualize the distribution
+hist(earthquake$Mag,
+     main = "Earthquake Magnitudes (Japan, NOAA)",
+     xlab = "Magnitude")
+```
+
+The Tōhoku earthquake (magnitude 9.0) is substantially larger than other events, which are clustered between 6.8 and 7.3. This makes it an extreme outlier in the dataset.
+
+However, this observation should not be removed:
+
+-   Extreme events are rare, so there is limited data at high magnitudes
+-   These events are often the primary target of anticipatory trigger models
+-   Removing them would bias the model toward smaller, less impactful events
+
+Removing high-impact events can undermine the purpose of anticipatory modeling, which is to detect and respond to catastrophic disasters.
+
+### Distributional Considerations
+
+The data do not need to be normally distributed. Logistic regression, commonly used for binary trigger models, does not require normally distributed predictors. In disaster contexts, variables are often highly skewed because severe events occur relatively infrequently.
+
+A more important issue is **class imbalance**, where high-impact events are less common than non-severe ones.
+
+**Example: Class Imbalance in Earthquake Data**
+
+Using NOAA earthquake data for Japan (2005–2025) [@noaa_earthquake_japan], we define a severe event as magnitude ≥ 7:
+
+```{r, fig-eq-imbalance}
+#| fig-cap: "Class Imbalance in Earthquake Data"
+# Create a binary outcome: severe earthquake (Mag >= 7)
+earthquake$severe <- ifelse(earthquake$Mag >= 7, 1, 0)
+
+# Visualize imbalance
+barplot(table(earthquake$severe),
+        names.arg = c("Non-severe", "Severe"),
+        main = "Class Imbalance in Earthquake Data",
+        ylab = "Count")
+```
+
+The @fig-eq-imbalance contains 45 non-severe events and 21 severe events (≈68% vs. 32%). Although not extremely imbalanced, severe events remain less frequent.
+
+**Consequences of Class Imbalance**
+
+Class imbalance can lead to misleading model performance. For example, a model that always predicts “non-severe” would achieve high accuracy but fail to identify critical events.
+
+This can result in:
+
+- Poor detection of high-impact disasters
+- Overreliance on accuracy as a metric
+- Trigger models that fail to activate when needed
+
+In humanitarian contexts, false negatives (missing a disaster) are often more costly than false positives.
+
+**Addressing Class Imbalance**
+
+1. Reweighting (assign higher importance to rare events):
+
+Reweighting increases the importance of rare but critical events during model training by assigning them higher weights.
+
+```{r, warning=FALSE}
+weights <- ifelse(earthquake$severe == 1, 2, 1)
+
+model_weighted <- glm(severe ~ Mag + Year,
+                      data = earthquake,
+                      family = "binomial",
+                      weights = weights)
+```
+In this approach, severe earthquakes (1) are given greater influence than non-severe events (0), encouraging the model to focus more on correctly identifying high-impact events.
+
+However, in this dataset, reweighting does not resolve the convergence warnings. This is because magnitude nearly perfectly separates severe and non-severe events, meaning the model is not estimating a probabilistic relationship but effectively reproducing a threshold rule.
+
+As a result, reweighting alone is insufficient when there is little or no overlap between classes. In practice, reweighting is most effective when the outcome is not perfectly determined by a single predictor and when some overlap exists between classes.
+
+2. Resampling (balance the dataset):
+
+Another approach to handling class imbalance is **resampling**, where the dataset is modified to increase the representation of rare events.
+
+```{r, fig-model-oversampling}
+#| fig-cap: "Balanced Dataset (After Oversampling)"
+# Oversample severe cases
+severe_cases <- earthquake[earthquake$severe == 1, ]
+balanced_data <- rbind(earthquake, severe_cases)
+
+barplot(table(balanced_data$severe),
+        names.arg = c("Non-severe", "Severe"),
+        main = "Balanced Dataset (After Oversampling)",
+        ylab = "Count")
+```
+The function rbind() stands for row bind. It combines two datasets by stacking one on top of the other. In this case, all severe observations are added again to the dataset, effectively increasing their frequency.
+
+By duplicating severe cases, the dataset becomes more balanced, which encourages the model to pay more attention to rare events during training.
+
+However, oversampling has limitations:
+
+- It does not introduce new information (it only repeats existing observations)
+- It may lead to overfitting if duplicated observations are overemphasized
+
+Despite these limitations, resampling is a simple and effective technique for improving model performance when severe events are rare.
+
+### Data Quality and Reproducibility
+
+To ensure transparency and reliability, all preprocessing steps should be **scripted, documented, and reproducible**.
+
+**Example of a reproducible data processing**
+
+A reproducible workflow explicitly shows how raw data are transformed:
+
+```{r}
+# Load raw data
+earthquake_raw <- read.csv("Japan_earthquake_2005-2025.csv")
+
+# Create a cleaned dataset with necessary variable for analysis
+earthquake_clean <- earthquake_raw[, c("Year", "Latitude", "Longitude", "Mag", "Focal.Depth..km.")]
+
+# Rename variables for clarity
+names(earthquake_clean) <- c("year", "lat", "lon", "magnitude", "depth_km")
+
+# Remove missing values
+earthquake_clean <- na.omit(earthquake_clean)
+
+head(earthquake_clean)
+```
+This ensures that anyone can reproduce the dataset from the original file using the same steps.
+
+**Units and Variable Definitions**
+
+In disaster datasets, variables must be clearly defined and consistently measured. For example:
+
+- magnitude: earthquake magnitude (Richter scale, unitless)
+- depth_km: focal depth in kilometers
+- lat, lon: geographic coordinates in decimal degrees
+
+Because data often come from multiple sources, unit mismatches are common. For example:
+
+- Depth may be recorded in meters vs. kilometers
+- Wind speed may be in km/h vs. mph
+- Damage may be reported in USD vs. local currency
+
+**Detecting and Reconciling Unit Mismatches**
+
+Simple checks can help identify inconsistencies:
+```{r}
+summary(earthquake_clean$depth_km)
+```
+
+If depth values appear unusually large (e.g., thousands instead of tens), this may indicate a unit mismatch.
+
+To standardize units:
+```{r}
+# Example: convert meters to kilometers if needed
+earthquake_clean$depth_km <- ifelse(earthquake_clean$depth_km > 1000,
+                                    earthquake_clean$depth_km / 1000,
+                                    earthquake_clean$depth_km)
+```
+
+This ensures all values are on a consistent scale before modeling.
+
+# Overview of the Workflow
+
+| Step | Objective                  | Output                               |
+|------|----------------------------|--------------------------------------|
+| 1    | Define the decision goal   | Clear operational trigger definition |
+| 2    | Gather and prepare data    | Clean, aligned dataset               |
+| 3    | Build a predictive model   | Estimated impact probabilities       |
+| 4    | Evaluate model performance | Diagnostic metrics and trade-offs    |
+| 5    | Select trigger threshold   | Operational activation rule          |
+| 6    | Stress-test and validate   | Robust and defensible system         |
+
+## Step 1: Define the Goal
+
+This is the most important step and often the most overlooked.
+
+Before any modeling begins, clearly define:
+
+-   What action are we trying to trigger?
+-   What level of predicted impact justifies action?
+-   What level of risk is acceptable?
+
+Example:
+
+> Activate emergency response (e.g. evacuation) if there is a high probability of a severe earthquake (magnitude ≥ 7).
+
+This step is conceptual rather than statistical. It requires aligning:
+
+-   Humanitarian priorities
+-   Budget constraints
+-   Ethical risk tolerance
+
+A poorly defined objective will produce a poorly calibrated trigger, no matter how sophisticated the model is.
+
+## Step 2: Gather and Clean the Data
+
+We use NOAA earthquake data for Japan (2005–2025) [@noaa_earthquake_japan].
+
+```{r}
+earthquake <- read.csv("Japan_earthquake_2005-2025.csv")
+
+# Select variables
+earthquake <- earthquake[, c("Year", "Mag", "Focal.Depth..km.")]
+
+# Create outcome variable
+earthquake$severe <- ifelse(earthquake$Mag >= 7, 1, 0)
+
+# Remove missing values
+earthquake <- na.omit(earthquake)
+
+head(earthquake)
+```
+
+Key preprocessing steps:
+
+- define a clear outcome (severe)
+- align variables
+- handle missing data
+
+## Step 3: Build a First Draft Model
+
+To demonstrate how a trigger model works, we use a simple example where higher hazard values increase the chance of a severe event.
+
+```{r}
+set.seed(1)
+
+hazard <- seq(1, 50, length.out = 60)
+severe <- ifelse(hazard + rnorm(60, 0, 8) > 28, 1, 0)
+
+data_sim <- data.frame(hazard, severe)
+```
+
+Fit a simple model:
+```{r}
+model_simple <- glm(severe ~ hazard,
+                    data = data_sim,
+                    family = "binomial")
+```
+
+Fit a more complex model:
+```{r,warning=FALSE}
+model_complex <- glm(severe ~ poly(hazard, 3),
+                     data = data_sim,
+                     family = "binomial")
+```
+
+Plot the results:
+```{r fig-model-comparison}
+
+#| fig-cap: "Comparison of a simple and a more flexible model."
+x <- seq(min(hazard), max(hazard), length.out = 200)
+
+p1 <- predict(model_simple, newdata = data.frame(hazard = x), type = "response")
+p2 <- predict(model_complex, newdata = data.frame(hazard = x), type = "response")
+
+plot(hazard, severe,
+     xlab = "Hazard",
+     ylab = "Severe (0/1)",
+     main = "Simple vs Complex Model")
+
+lines(x, p1, lwd = 2)
+lines(x, p2, lwd = 2, lty = 2)
+
+legend("bottomright",
+       legend = c("Simple model", "Complex model"),
+       lty = c(1, 2),
+       lwd = 2)
+```
+In @fig-model-comparison, the simple and more flexible models produce very similar curves, indicating that the relationship between hazard and severe events is already well captured by a simple model.
+
+However, when models become more complex, they may begin to fit random variation in the data rather than the underlying pattern. This is known as overfitting.
+
+Overfitting occurs when a model performs well on the training data but does not generalize well to new data. For trigger systems, this can lead to unreliable decisions in real-world settings.
+
+## Step 4: Evaluate Performance
+
+After building the model, we evaluate how well it predicts severe events using historical data. The goal is not only to measure accuracy, but also to understand how the model behaves when making decisions.
+
+The model produces predicted probabilities for each observation:
+```{r}
+#Make prediction
+pred_probs <- predict(model_simple, type = "response")
+```
+These probabilities represent how likely each event is to be severe.
+
+To turn these into decisions, we apply a threshold of 0.5:
+```{r}
+#Choose a temporary threshold of 0.5
+pred_class <- ifelse(pred_probs > 0.5, 1, 0)
+```
+
+This means:
+
+- If probability > 0.5 → predict a severe event (trigger action)
+- Otherwise → predict non-severe (no action)
+
+But the threshold 0.5 here is just an example which could be modified based on the research.
+
+```{r, message=FALSE}
+#Confusion matrix
+library(knitr)
+
+cm <- table(Predicted = pred_class, Actual = data_sim$severe)
+
+kable(cm, col.names = c("Actual: No", "Actual : Yes"), caption = "Confusion Matrix")
+```
+
+The confusion matrix shows how the model performs:
+
+- 31 True Negatives: correctly predicted non-severe events
+- 23 True Positives: correctly predicted severe events
+- 3 False Positives: predicted a disaster that did not occur
+- 3 False Negatives: missed real disasters
+
+Based on the confusion matrix we can answer some questions:
+
+- How many severe events are correctly detected based on the number of True Positives.
+- How many severe events are missed based on the number of False Negatives.
+- How often unnecessary actions are triggered based on the number of False Positives.
+
+In disaster response, false negatives (missed disasters) are typically the most critical error.
+
+To evaluate performance across all possible thresholds, use a ROC curve. The ROC curve shows how sensitivity and specificity change as the threshold varies.
+
+The Area Under the Curve (AUC) summarizes performance:
+
+- 0.5 → no predictive ability
+- 0.7–0.8 → acceptable
+- 0.8+ → strong
+
+
+```{r, message=FALSE, fig-roc}
+#| fig-cap: "ROC curve showing the trade-off between sensitivity and specificity across different thresholds. A curve closer to the top-left corner indicates better model performance."
+
+library(pROC)
+
+roc_obj <- roc(data_sim$severe, pred_probs)
+plot(roc_obj, main = "ROC Curve")
+auc(roc_obj)
+```
+The @fig-roc curve is very close to the top-left corner. It rises sharply and quickly reaches high sensitivity. It stays well above the diagonal reference line (the diagonal line represents a random model). The model performs very well across different thresholds and is so much better than random guessing.
+
+The AUC we got above (0.9842) is suggesting that the model has excellent ability to distinguish between severe and non-severe events.
+
+However, despite the high AUC, the model still misses 3 severe events (false negatives). In a disaster response context, these missed events are particularly important, as they represent situations where action would not be triggered despite a real disaster occurring.
+
+This highlights that while the model performs very well overall, the choice of threshold remains critical and may need to be adjusted to reduce missed disasters.
+
+This is why evaluating both:
+
+- overall model performance (AUC), and
+- decision-based performance (confusion matrix)
+
+is essential.
+
+## Step 5: Choose the Trigger Threshold
+
+After building and evaluating the model, the next step is to decide when to take action.
+
+The model gives predicted probabilities, but we must choose a threshold to turn those into decisions.
+
+1. What Does the Threshold Do?
+
+The threshold controls how often the system triggers action:
+
+- Low threshold (e.g., 0.3):
+    - More activations
+    - Fewer missed disasters
+    - Higher cost
+    
+- Medium threshold (e.g., 0.5):
+    - Balanced behavior
+    
+- High threshold (e.g., 0.7):
+    - Fewer activations
+    - More missed disasters
+    
+2. Compare thresholds with example:
+
+```{r}
+set.seed(123)
+
+n <- 80
+time <- 1:n
+
+# Simulate hazard severity (many small, few large events)
+severity <- rexp(n, rate = 0.12)
+
+# True severe events
+severe_event <- ifelse(severity > 10, 1, 0)
+
+# Predicted probabilities
+pred_probs <- plogis(-3 + 0.35 * severity)
+
+data_thresh <- data.frame(time, severity, severe_event, pred_probs)
+
+# Apply thresholds
+data_thresh$low  <- ifelse(pred_probs >= 0.3, 1, 0)
+data_thresh$med  <- ifelse(pred_probs >= 0.5, 1, 0)
+data_thresh$high <- ifelse(pred_probs >= 0.7, 1, 0)
+```
+
+```{r, fig-sensitivity }
+#| fig-cap: "Sensitivity of predicted probabilities to small changes in data."
+plot(data_thresh$time, data_thresh$pred_probs, type = "b",
+     xlab = "Time", ylab = "Predicted Probability",
+     main = "Predicted Probabilities with Thresholds")
+
+abline(h = 0.3, lty = 2)
+abline(h = 0.5, lty = 2)
+abline(h = 0.7, lty = 2)
+```
+The @fig-sensitivity plot above shows predicted probabilities over time, with three thresholds:
+
+- 0.3 (low)
+- 0.5 (medium)
+- 0.7 (high)
+
+Any point above a line would trigger action at that threshold.
+
+- At 0.3, many points are above the line → frequent activation
+- At 0.5, fewer points are above → moderate activation
+- At 0.7, only the highest points are above → rare activation
+
+```{r, fig-threshold-behavior}
+#| fig-cap: "Sensitivity of predicted probabilities to small changes in data."
+par(mfrow = c(3,1))
+
+plot(time, severity, type = "h", main = "Low Threshold (0.3)")
+points(time[data_thresh$low == 1], severity[data_thresh$low == 1], pch = 16)
+
+plot(time, severity, type = "h", main = "Medium Threshold (0.5)")
+points(time[data_thresh$med == 1], severity[data_thresh$med == 1], pch = 16)
+
+plot(time, severity, type = "h", main = "High Threshold (0.7)")
+points(time[data_thresh$high == 1], severity[data_thresh$high == 1], pch = 16)
+```
+The @fig-threshold-behavior plot above show how each threshold behaves in practice:
+
+- Low threshold (0.3)
+    - Many events trigger action.
+    - Most severe events are captured.
+    - But many smaller events also trigger → higher cost.
+
+- Medium threshold (0.5)
+    - Fewer activations than low threshold.
+    - Still captures most severe events.
+    - More balanced behavior.
+
+- High threshold (0.7)
+    - Only the largest events trigger action.
+    - Fewer unnecessary activations.
+    - But some important events are missed → higher risk.
+    
+These plots show a clear trade-off:
+
+- Lower threshold → act more often, miss fewer disasters.
+- Higher threshold → act less often, miss more disasters.
+
+The best threshold depends on your priorities:
+
+- If missing disasters is very costly → choose a lower threshold.
+- If resources are limited → choose a higher threshold.
+
+Define the final rule clearly:
+    “Trigger action if predicted probability ≥ chosen threshold.”
+
+The selected threshold defines when action is taken, but this decision should not rely on a single dataset or scenario.
+
+Before deployment, it is important to test how stable this trigger is under different conditions.
+
+In the next step, we evaluate how sensitive the trigger is to changes in data and whether it performs consistently over time.
+
+## Step 6: Stress-Test the System
+
+A trigger that performs well in one setting may not behave the same way in practice.
+
+This step tests whether the chosen threshold and model produce stable and reliable decisions when conditions change.
+
+Small changes in the data should not lead to big changes in decisions.
+
+For example: 
+```{r}
+# Add small noise to predictions
+pred_perturbed <- pred_probs + rnorm(length(pred_probs), 0, 0.05)
+
+# Apply threshold
+act_original  <- ifelse(pred_probs >= 0.5, 1, 0)
+act_perturbed <- ifelse(pred_perturbed >= 0.5, 1, 0)
+```
+
+```{r, fig-stability}
+#| fig-cap: "Sensitivity of predicted probabilities to small changes in data. The dashed line represents slightly perturbed predictions, and the horizontal line shows the trigger threshold."
+plot(pred_probs, type = "l",
+     ylim = c(0,1),
+     ylab = "Predicted Probability",
+     xlab = "Time",
+     main = "Sensitivity to Small Changes")
+
+lines(pred_perturbed, lty = 2)
+abline(h = 0.5, lty = 3)
+```
+The @fig-stability plot compares:
+
+- Solid line → original predicted probabilities.
+- Dashed line → slightly changed data.
+- Horizontal line (0.5) → trigger threshold.
+
+The two lines are very similar overall.
+
+However, near the threshold (0.5), small differences appear.
+
+In some cases, the dashed line crosses the threshold when the solid line does not (or vice versa).
+
+**This means:**
+
+- A small change in data can change whether action is triggered.
+- The trigger is most sensitive near the threshold.
+
+When stress-testing, ask:
+
+- Does the trigger still capture extreme events?
+- Does performance change across regions or time?
+- Are decisions stable, or do they change easily?
+- Does updating the model change activation frequency a lot?
+
+Out-of-sample testing is strongly recommended because we can check if the model is still perform well or the result are still consistent over time. 
+
+A good trigger should be:
+
+- Stable → small data changes do not cause large decision changes.
+- Interpretable → easy to explain to decision-makers.
+- Operationally feasible → realistic for real-world use.
+
+# Additional Resources
+
+Designing anticipatory action triggers often requires combining statistical modeling with domain knowledge about disaster risk and humanitarian operations. The following resources provide additional guidance for users who want to explore these topics in greater depth.
+
+## Forecast-Based Financing and Anticipatory Action
+
+For a broader overview of anticipatory action systems and how statistical triggers are used in humanitarian response, readers should consult the Annual Review article on disasters and statistics in the humanitarian sector. This work discusses how early warning systems, predictive modeling, and statistical decision-making are increasingly used to support disaster preparedness. [@pattenDisastersStatisticsHumanitarian2025]
+
+Organizations such as the International Federation of Red Cross and Red Crescent Societies (IFRC) and the United Nations Office for the Coordination of Humanitarian Affairs (UNOCHA) also publish practical documentation on forecast-based financing and anticipatory action program design.
+
+## Earth Observation and Disaster Forecasting
+
+Remote sensing and earth observation data are increasingly used to improve disaster prediction and monitoring. Satellite observations combined with artificial intelligence techniques can help identify hazard patterns, monitor environmental change, and support disaster preparedness systems. [@ghamisiResponsibleArtificialIntelligence2025]
+
+## Machine Learning Approaches
+
+In addition to traditional statistical models such as logistic regression, Machine learning and artificial intelligence tools are also being explored for crisis management and humanitarian response. For example, recent work highlights how large language models and AI systems can assist in analyzing crisis information, coordinating response strategies, and supporting decision-making during disaster events. [@odubolaAISocialGood2025]
